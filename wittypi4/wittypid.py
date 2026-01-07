@@ -20,12 +20,20 @@ import os
 import pathlib
 import signal
 import threading
-import time
 
 import smbus2
 import yaml
 
-from . import ActionReason, ButtonEntry, ScheduleConfiguration, WittyPi4, WittyPiException
+from . import (
+    ActionReason,
+    ButtonEntry,
+    PowerManager,
+    RaspberryPi5,
+    ScheduleConfiguration,
+    WittyPi4,
+    WittyPiException,
+    detect_hardware,
+)
 from .__main__ import parser
 
 parser.prog = "wittypid"
@@ -138,27 +146,27 @@ def last_known_time() -> datetime.datetime:
     return max(clocks)
 
 
-class WittyPi4Daemon(WittyPi4, threading.Thread):
-    """Daemon thread for managing WittyPi 4 schedules automatically.
+class PowerManagerDaemon(threading.Thread):
+    """Daemon thread for managing power management schedules automatically.
 
-    This class extends WittyPi4 with daemon functionality:
-    - Runs as a background thread
-    - Validates RTC time on startup
-    - Loads and applies schedule configuration
-    - Continuously updates alarms based on schedule
-    - Handles manual power-on with button delay
-    - Responds to SIGTERM/SIGINT for graceful shutdown
+    This class works with PowerManager instances (WittyPi4 or RaspberryPi5) to:
+    - Run as a background thread
+    - Validate RTC time on startup
+    - Load and apply schedule configuration
+    - Continuously update alarms based on schedule
+    - Handle manual power-on with button delay
+    - Respond to SIGTERM/SIGINT for graceful shutdown
 
     Args:
+        device: PowerManager instance (WittyPi4 or RaspberryPi5)
         schedule: Open file handle to YAML schedule configuration
-        *args: Additional arguments passed to WittyPi4 constructor
-        **kwargs: Additional keyword arguments passed to WittyPi4 constructor
     """
 
-    def __init__(self, schedule: io.TextIOWrapper, *args, **kwargs):
+    def __init__(self, device: PowerManager, schedule: io.TextIOWrapper):
+        super().__init__()
+        self._device = device
         self._stop = threading.Event()
         self._schedule = schedule
-        super().__init__(*args, **kwargs)
 
     def terminate(self, sig):
         """Handle termination signals gracefully.
@@ -181,27 +189,29 @@ class WittyPi4Daemon(WittyPi4, threading.Thread):
         signal.signal(signal.SIGINT, lambda sig, _: self.terminate(sig))
         signal.signal(signal.SIGTERM, lambda sig, _: self.terminate(sig))
 
-        logger.info("Welcome to %s, action reason: %s", parser.prog, self.action_reason)
-        self.clear_flags()
+        logger.info("Welcome to %s, action reason: %s", parser.prog, self._device.action_reason)
+        self._device.clear_flags()
 
-        # setting default on
-        self.default_on = True
-        self.default_on_delay = 1
+        # Hardware-specific configuration (only for WittyPi4)
+        if isinstance(self._device, WittyPi4):
+            # setting default on
+            self._device.default_on = True
+            self._device.default_on_delay = 1
 
-        # setting power cut delay
-        self.power_cut_delay = 25
+            # setting power cut delay
+            self._device.power_cut_delay = 25
 
         try:
             # check clock plausibility
-            if self.rtc_datetime < last_known_time():
+            if self._device.rtc_datetime < last_known_time():
                 logger.warning(
-                    "RTC is implausible (%s). Connect to GPS/internet and wait for timesync", self.rtc_datetime
+                    "RTC is implausible (%s). Connect to GPS/internet and wait for timesync", self._device.rtc_datetime
                 )
                 exit(3)
 
             # check RTC and systemclock matching
-            if not self.rtc_sysclock_match():
-                logger.warning("RTC is does not match system clock, check system configuration")
+            if not self._device.rtc_sysclock_match():
+                logger.warning("RTC does not match system clock, check system configuration")
                 exit(3)
 
             # set clock synced
@@ -219,49 +229,58 @@ class WittyPi4Daemon(WittyPi4, threading.Thread):
         schedule_raw: dict = yaml.safe_load(self._schedule)
         sc = ScheduleConfiguration(schedule_raw)
 
-        if self.action_reason in [
+        if self._device.action_reason in [
+            ActionReason.REASON_NA,
             ActionReason.BUTTON_CLICK,
             ActionReason.VOLTAGE_RESTORE,
             ActionReason.POWER_CONNECTED,
         ]:
             button_entry = ButtonEntry(sc.button_delay)
-            logger.info("Started by %s, adding %s", self.action_reason, button_entry)
+            logger.info("Started by %s, adding %s", self._device.action_reason, button_entry)
             sc.entries.append(button_entry)
 
         shutdown_delay_s = 30
 
         while not self._stop.is_set():
-            now = self.rtc_datetime
+            now = self._device.rtc_datetime
             next_startup = sc.next_startup(now)
             next_shutdown = sc.next_shutdown(now)
 
             logger.info("Setting next_shutdown: %s, next_startup: %s", next_shutdown, next_startup)
-            self.set_startup_datetime(next_startup)
-            self.set_shutdown_datetime(next_shutdown)
+            self._device.set_startup_datetime(next_startup)
+            self._device.set_shutdown_datetime(next_shutdown)
 
-            # somehow we're here while should't be active, setting shutdown with delay
+            # Check if shutdown time has arrived
+            shutdown_dt = self._device.get_shutdown_datetime()
+            if shutdown_dt and shutdown_dt <= now:
+                logger.warning("Shutdown time has arrived, shutting down")
+                os.system("shutdown 0")
+                break
+
+            # somehow we're here while shouldn't be active, setting shutdown with delay
             if not sc.active(now):
                 logger.info("Shouldn't be active, scheduling shutdown in %ss", shutdown_delay_s)
-                self.set_shutdown_datetime(now + datetime.timedelta(seconds=shutdown_delay_s))
+                self._device.set_shutdown_datetime(now + datetime.timedelta(seconds=shutdown_delay_s))
 
-            # somehow the shutdown alarm fired, and we're still running.
-            elif self.action_reason in [
+            # Check for hardware-specific shutdown triggers (WittyPi only)
+            elif self._device.action_reason in [
                 ActionReason.ALARM_SHUTDOWN,
                 ActionReason.LOW_VOLTAGE,
                 ActionReason.OVER_TEMPERATURE,
             ]:
-                logger.warning("Alarm %s fired, shutting down", self.action_reason)
+                logger.warning("Alarm %s fired, shutting down", self._device.action_reason)
                 os.system("shutdown 0")
+                break
 
             # wait for 60s or until signal
             self._stop.wait(60)
 
-        self.set_shutdown_datetime(None)
-        self.set_startup_datetime(sc.next_startup())
+        self._device.set_shutdown_datetime(None)
+        self._device.set_startup_datetime(sc.next_startup())
         logger.info(
             "Terminating, set ScheduleConfiguration shutdown: %s, startup: %s",
-            self.get_shutdown_datetime(),
-            self.get_startup_datetime(),
+            self._device.get_shutdown_datetime(),
+            self._device.get_startup_datetime(),
         )
         logger.info("Bye from wittypid")
 
@@ -269,11 +288,12 @@ class WittyPi4Daemon(WittyPi4, threading.Thread):
 def main():
     """Entry point for wittypid daemon.
 
-    Parses command-line arguments, initializes logging, connects to WittyPi 4
-    hardware, and starts the daemon loop.
+    Parses command-line arguments, initializes logging, detects hardware,
+    connects to power management hardware, and starts the daemon loop.
 
     Exit codes:
-        1: Failed to connect to WittyPi hardware
+        1: Failed to connect to power management hardware
+        2: No supported hardware detected
         3: RTC validation failed (set by daemon.run())
     """
     args = parser.parse_args()
@@ -284,15 +304,31 @@ def main():
     logging_stderr.setLevel(logging_level)
     logging.basicConfig(level=logging.DEBUG, handlers=[logging_stderr])
 
-    # setup wittypi
-    bus = smbus2.SMBus(bus=args.bus, force=args.force)
+    # Detect hardware
+    hardware_type = detect_hardware()
+    if not hardware_type:
+        logger.error("No supported power management hardware detected. Terminating.")
+        exit(2)
+
+    logger.info("Detected hardware: %s", hardware_type)
+
+    # Initialize appropriate device
     try:
-        wp = WittyPi4Daemon(args.schedule, bus, args.addr)
+        if hardware_type == "wittypi4":
+            bus = smbus2.SMBus(bus=args.bus, force=args.force)
+            device = WittyPi4(bus, args.addr)
+        elif hardware_type == "raspberrypi5":
+            device = RaspberryPi5()
+        else:
+            logger.error("Unknown hardware type: %s", hardware_type)
+            exit(2)
     except WittyPiException as ex:
-        logger.error("Couldn't connect to WittyPi (%s), terminating.", ex)
+        logger.error("Couldn't connect to power management hardware (%s), terminating.", ex)
         exit(1)
 
-    wp.run()
+    # Create and run daemon
+    daemon = PowerManagerDaemon(device, args.schedule)
+    daemon.run()
 
 
 if __name__ == "__main__":
