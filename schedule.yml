@@ -1,12 +1,4 @@
-# define coordinates to calculate latitude specific times (sunrise, ...)
-lat: 50.85318
-lon: 8.78735
-
-# set false, to enable schedule
-force_on: true
-
-# shutdown interval after manual powering (00:00 disables)
-button_delay: "00:30"
+### Schedule Configuration ###
 
 # schedules to run the device
 # start/stop to be modified by [sunrise, sunset, dusk, dawn] or as absolute timestamps
@@ -20,3 +12,19 @@ schedule:
   - name: birds morning song
     start: sunrise-01:00
     stop: sunrise+02:00
+
+### Optional parameters ###
+
+# define coordinates to calculate latitude specific times (sunrise, ...)
+# Required if using sunrise/sunset schedules, otherwise falls back to /etc/geolocation
+# lat: 50.85318
+# lon: 8.78735
+
+# timezone for schedule calculations (defaults to system timezone)
+# tz: "Europe/Berlin"
+
+# set false, to enable schedule (default: false)
+# force_on: false
+
+# shutdown interval after manual powering (default: 00:10 - 10 minutes)
+# button_delay: "00:10"

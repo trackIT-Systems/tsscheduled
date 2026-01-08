@@ -91,17 +91,17 @@ Manages startup/shutdown scheduling based on time and astronomical events.
 **Constructor:**
 
 ```python
-ScheduleConfiguration(config, tz=None)
+ScheduleConfiguration(config)
 ```
 
 **Parameters:**
 - `config` (dict): Dictionary containing schedule configuration:
   - `lat` (float, optional): Latitude for astronomical calculations
   - `lon` (float, optional): Longitude for astronomical calculations
+  - `tz` (str, optional): Timezone name (e.g., "Europe/Berlin", "America/New_York") for schedule calculations (defaults to system timezone)
   - `force_on` (bool, optional): If True, system stays on indefinitely (default: False)
-  - `button_delay` (str, optional): Duration string (e.g., "00:30") to stay on after button press
+  - `button_delay` (str, optional): Duration string (e.g., "00:30") to stay on after button press (default: "00:10")
   - `schedule` (list): List of schedule entry dicts with 'name', 'start', 'stop'
-- `tz` (tzinfo, optional): Timezone for schedule calculations
 
 **Example:**
 
@@ -111,6 +111,7 @@ from tsschedule import ScheduleConfiguration
 config = {
     'lat': 50.85318,
     'lon': 8.78735,
+    'tz': 'Europe/Berlin',  # optional, defaults to system timezone
     'force_on': False,
     'button_delay': '00:30',
     'schedule': [

@@ -35,6 +35,7 @@ import datetime
 # Load schedule configuration
 config = {
     'lat': 50.85318, 'lon': 8.78735,
+    'tz': 'Europe/Berlin',  # optional, defaults to system timezone
     'schedule': [
         {'name': 'morning', 'start': 'sunrise-01:00', 'stop': '12:00'},
         {'name': 'evening', 'start': '18:00', 'stop': 'sunset+01:00'}
@@ -82,6 +83,7 @@ Schedules are defined in YAML format. See [schedule.yml](schedule.yml) for an ex
 
 Key features:
 - **Location-based**: Configure latitude/longitude for astronomical calculations
+- **Timezone**: Configure timezone (e.g., "Europe/Berlin") for schedule calculations (optional, defaults to system timezone)
 - **Multiple schedules**: Define multiple overlapping time windows
 - **Astronomical events**: Use `sunrise`, `sunset`, `dawn`, `dusk` with offsets
 - **Force-on mode**: Disable automatic shutdowns when needed

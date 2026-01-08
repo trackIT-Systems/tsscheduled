@@ -33,6 +33,7 @@ import importlib
 import logging
 import platform
 import time
+from zoneinfo import ZoneInfo
 
 import astral
 import astral.sun
@@ -267,10 +268,10 @@ class ScheduleConfiguration:
     Args:
         config: Dictionary containing schedule configuration with keys:
             - lat/lon: Location coordinates for astronomical calculations (optional)
+            - tz: Timezone name (e.g., "Europe/Berlin", "America/New_York") for schedule calculations (optional, defaults to system timezone)
             - force_on: If True, system stays on indefinitely (optional, default False)
-            - button_delay: Duration string (e.g., "00:30") to stay on after button press
+            - button_delay: Duration string (e.g., "00:30") to stay on after button press (optional, default: "00:10")
             - schedule: List of schedule entry dicts with 'name', 'start', 'stop'
-        tz: Timezone for schedule calculations. Defaults to system local timezone.
 
     Attributes:
         force_on: If True, system never shuts down automatically
@@ -280,6 +281,7 @@ class ScheduleConfiguration:
     Example:
         >>> config = {
         ...     'lat': 50.85318, 'lon': 8.78735,
+        ...     'tz': 'Europe/Berlin',  # optional, defaults to system timezone
         ...     'force_on': False,
         ...     'button_delay': '00:30',
         ...     'schedule': [
@@ -294,10 +296,16 @@ class ScheduleConfiguration:
     def __init__(
         self,
         config: dict,
-        tz: datetime.tzinfo = None,
     ):
-        # get local timezone
-        if not tz:
+        # get timezone from config if provided, otherwise use system timezone
+        if "tz" in config:
+            try:
+                tz = ZoneInfo(config["tz"])
+                logger.info("Using timezone from config: %s", config["tz"])
+            except Exception as e:
+                logger.warning("Invalid timezone '%s' in config: %s, using system timezone", config["tz"], e)
+                tz = datetime.datetime.now().astimezone().tzinfo
+        else:
             tz = datetime.datetime.now().astimezone().tzinfo
 
         self._tz = tz
@@ -336,7 +344,8 @@ class ScheduleConfiguration:
                 seconds=pytimeparse.parse(config["button_delay"], granularity="minutes")
             )
         except Exception:
-            self.button_delay = None
+            # Default to 10 minutes if not specified or invalid
+            self.button_delay = datetime.timedelta(minutes=10)
         logger.debug("Using button delay of %s", self.button_delay)
 
         self.entries: list[ScheduleEntry] = []
@@ -454,4 +463,3 @@ __all__ = [
     "bcd2bin",
     "bin2bcd",
 ]
-
