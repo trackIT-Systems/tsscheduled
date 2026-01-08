@@ -9,6 +9,7 @@ import logging
 import smbus2
 
 from .. import ActionReason, ALARM_RESET, I2C_MC_ADDRESS, bcd2bin, bin2bcd
+from .base import PowerManager
 
 logger = logging.getLogger("tsschedule.backends.wittypi4")
 
@@ -105,7 +106,7 @@ class WittyPiException(Exception):
     pass
 
 
-class WittyPi4(object):
+class WittyPi4(PowerManager):
     """Main interface to WittyPi 4 power management hardware.
 
     This class provides complete access to WittyPi 4 functionality including:
@@ -149,9 +150,9 @@ class WittyPi4(object):
         addr: int = I2C_MC_ADDRESS,
         tz=datetime.UTC,
     ):
+        super().__init__(tz)
         self._bus = bus or smbus2.SMBus(1, force=True)
         self._addr = addr
-        self._tz = tz
 
         try:
             firmware_id = self.firmware_id

@@ -6,8 +6,11 @@ This document provides comprehensive API reference for developers using the tsOS
 
 - [Quick Start](#quick-start)
 - [Installation](#installation)
+- [Hardware Detection](#hardware-detection)
 - [Core Classes](#core-classes)
+  - [PowerManager](#powermanager)
   - [WittyPi4](#wittypi4)
+  - [RaspberryPi5](#raspberrypi5)
   - [ScheduleConfiguration](#scheduleconfiguration)
   - [ActionReason](#actionreason)
 - [Hardware Monitoring](#hardware-monitoring)
@@ -20,12 +23,51 @@ This document provides comprehensive API reference for developers using the tsOS
 
 ## Quick Start
 
+### Using Hardware Detection (Recommended)
+
+```python
+from tsschedule import detect_hardware
+from tsschedule.backends.raspberrypi5 import RaspberryPi5
+from tsschedule.backends.wittypi4 import WittyPi4
+import smbus2
+import datetime
+
+# Automatically detect hardware
+hardware_type = detect_hardware()
+if hardware_type == "wittypi4":
+    bus = smbus2.SMBus(1, force=True)
+    device = WittyPi4(bus)
+elif hardware_type == "raspberrypi5":
+    device = RaspberryPi5()
+else:
+    raise RuntimeError("No supported hardware detected")
+
+# Read hardware status
+print(f"RTC Time: {device.rtc_datetime}")
+print(f"Startup Reason: {device.action_reason}")
+
+# WittyPi4-specific features
+if isinstance(device, WittyPi4):
+    print(f"Input Voltage: {device.voltage_in}V")
+    print(f"Output Voltage: {device.voltage_out}V")
+    print(f"Current: {device.current_out}A")
+    print(f"Temperature: {device.lm75b_temperature}°C")
+
+# Schedule next startup in 1 hour
+device.set_startup_datetime(datetime.datetime.now() + datetime.timedelta(hours=1))
+
+# Schedule shutdown in 30 minutes
+device.set_shutdown_datetime(datetime.datetime.now() + datetime.timedelta(minutes=30))
+```
+
+### Direct Backend Usage
+
 ```python
 import smbus2
 from tsschedule.backends.wittypi4 import WittyPi4
 import datetime
 
-# Initialize WittyPi 4 backend
+# Initialize WittyPi 4 backend directly
 bus = smbus2.SMBus(1, force=True)
 wp = WittyPi4(bus)
 
@@ -54,7 +96,81 @@ pip install -e .
 pdm install
 ```
 
+## Hardware Detection
+
+The `detect_hardware()` function automatically detects which power management hardware is available on the system.
+
+### detect_hardware()
+
+```python
+from tsschedule import detect_hardware
+
+# Detect hardware automatically
+hardware_type = detect_hardware()
+# Returns: "wittypi4", "raspberrypi5", or None
+
+if hardware_type == "wittypi4":
+    # Initialize WittyPi 4 backend
+    ...
+elif hardware_type == "raspberrypi5":
+    # Initialize Raspberry Pi 5 backend
+    ...
+```
+
+**Parameters:**
+- `manual_override` (str, optional): If provided, return this value without detection. Valid values: "wittypi4", "raspberrypi5"
+
+**Returns:**
+- `str | None`: "wittypi4" if WittyPi hardware detected, "raspberrypi5" if Raspberry Pi 5 detected, or None if neither detected
+
+**Example:**
+
+```python
+from tsschedule import detect_hardware
+from tsschedule.backends.raspberrypi5 import RaspberryPi5
+from tsschedule.backends.wittypi4 import WittyPi4
+import smbus2
+
+hardware_type = detect_hardware()
+if hardware_type == "wittypi4":
+    bus = smbus2.SMBus(1, force=True)
+    device = WittyPi4(bus)
+elif hardware_type == "raspberrypi5":
+    device = RaspberryPi5()
+else:
+    raise RuntimeError("No supported hardware detected")
+```
+
 ## Core Classes
+
+### PowerManager
+
+Abstract base class for power management hardware backends. Both `WittyPi4` and `RaspberryPi5` inherit from this class.
+
+**Common Interface:**
+- `rtc_datetime`: Get/set RTC datetime
+- `set_startup_datetime(ts)`: Set scheduled startup time
+- `get_startup_datetime()`: Get currently configured startup time
+- `set_shutdown_datetime(ts)`: Set scheduled shutdown time
+- `get_shutdown_datetime()`: Get currently configured shutdown time
+- `clear_flags()`: Clear all alarm flags
+- `action_reason`: Get reason for current power state
+- `rtc_sysclock_match(threshold)`: Check if RTC matches system clock
+
+**Example:**
+
+```python
+from tsschedule.backends.base import PowerManager
+from tsschedule.backends.wittypi4 import WittyPi4
+from tsschedule.backends.raspberrypi5 import RaspberryPi5
+
+# Both backends implement PowerManager interface
+device: PowerManager = WittyPi4()  # or RaspberryPi5()
+
+# Common operations work on both
+device.set_startup_datetime(...)
+device.set_shutdown_datetime(...)
+```
 
 ### WittyPi4
 
@@ -83,6 +199,56 @@ from tsschedule.backends.wittypi4 import WittyPi4
 bus = smbus2.SMBus(1, force=True)
 wp = WittyPi4(bus)
 ```
+
+### RaspberryPi5
+
+Interface to Raspberry Pi 5 onboard RTC for sleep/wake operations.
+
+**Constructor:**
+
+```python
+RaspberryPi5(tz=datetime.UTC, check_eeprom=True)
+```
+
+**Parameters:**
+- `tz` (tzinfo, optional): Timezone for RTC operations (default: UTC)
+- `check_eeprom` (bool, optional): If True (default), check and configure EEPROM settings
+
+**Raises:**
+- `WittyPiException`: If RTC wakealarm interface is not available
+
+**Features:**
+- RTC datetime operations
+- Wake alarm configuration via sysfs
+- System shutdown with wake scheduling
+- Automatic EEPROM configuration checking
+
+**Limitations:**
+- No voltage/current monitoring (WittyPi4 only)
+- No temperature monitoring (WittyPi4 only)
+- No hardware power cut delays (WittyPi4 only)
+- No wake reason detection (always returns REASON_NA)
+
+**Example:**
+
+```python
+from tsschedule.backends.raspberrypi5 import RaspberryPi5
+import datetime
+
+# Initialize Raspberry Pi 5 backend
+pi5 = RaspberryPi5()
+
+# Read RTC time
+print(f"RTC Time: {pi5.rtc_datetime}")
+
+# Schedule wake in 1 hour
+pi5.set_startup_datetime(datetime.datetime.now() + datetime.timedelta(hours=1))
+
+# Schedule shutdown in 30 minutes
+pi5.set_shutdown_datetime(datetime.datetime.now() + datetime.timedelta(minutes=30))
+```
+
+**Note:** Raspberry Pi 5 requires EEPROM configuration (`POWER_OFF_ON_HALT=1` and `WAKE_ON_GPIO=0`) for proper sleep/wake functionality. The `RaspberryPi5` class automatically checks and configures these settings if `check_eeprom=True` (default).
 
 ### ScheduleConfiguration
 
@@ -368,7 +534,7 @@ if wp.rtc_sysclock_match():
 else:
     print("RTC and system clock differ!")
     
-# Use custom threshold
+# Use custom threshold (daemon uses 5 seconds for more lenient checking)
 if wp.rtc_sysclock_match(threshold=datetime.timedelta(seconds=5)):
     print("RTC matches within 5 seconds")
 ```
@@ -596,10 +762,43 @@ wp = WittyPi4(tz=berlin_tz)
 print(wp.rtc_datetime)
 ```
 
+## Multi-Backend Support
+
+The library supports multiple hardware backends through a common `PowerManager` interface:
+
+```python
+from tsschedule import detect_hardware
+from tsschedule.backends.base import PowerManager
+from tsschedule.backends.raspberrypi5 import RaspberryPi5
+from tsschedule.backends.wittypi4 import WittyPi4
+import smbus2
+
+# Detect and initialize appropriate backend
+hardware_type = detect_hardware()
+if hardware_type == "wittypi4":
+    bus = smbus2.SMBus(1, force=True)
+    device: PowerManager = WittyPi4(bus)
+elif hardware_type == "raspberrypi5":
+    device: PowerManager = RaspberryPi5()
+else:
+    raise RuntimeError("No supported hardware detected")
+
+# Common interface works for both backends
+device.set_startup_datetime(...)
+device.set_shutdown_datetime(...)
+rtc_time = device.rtc_datetime
+
+# Backend-specific features
+if isinstance(device, WittyPi4):
+    voltage = device.voltage_in  # WittyPi4 only
+    temperature = device.lm75b_temperature  # WittyPi4 only
+```
+
 ## See Also
 
 - [Main README](../Readme.md) - Software overview and installation
 - [WittyPi 4 Setup](WittyPi4.md) - Hardware setup and installation for WittyPi 4
+- [Raspberry Pi 5 Setup](RaspberryPi5.md) - Hardware setup and installation for Raspberry Pi 5
 - [Example Schedule](../schedule.yml) - Example schedule configuration
 - [WittyPi 4 User Manual](https://www.uugear.com/doc/WittyPi4_UserManual.pdf) - Official hardware documentation
 

@@ -143,28 +143,53 @@ The system will wake and restart automatically when the alarm fires. The power b
 
 ## Python API Usage
 
-When using tsschedule with Raspberry Pi 5, you'll need a backend implementation that interfaces with the Linux RTC. The backend should:
+The tsschedule library provides a `RaspberryPi5` backend that interfaces with the Linux RTC automatically.
 
-1. Read/write RTC time via `/sys/class/rtc/rtc0/` or Python's `rtc` module
-2. Set wake alarms via the RTC wakealarm interface
-3. Handle power state transitions appropriately
-
-### Example RTC Access
+### Quick Example
 
 ```python
+from tsschedule.backends.raspberrypi5 import RaspberryPi5
 import datetime
-import pathlib
+
+# Initialize Raspberry Pi 5 backend
+pi5 = RaspberryPi5()
 
 # Read RTC time
-rtc_path = pathlib.Path("/sys/class/rtc/rtc0")
-rtc_time_str = (rtc_path / "time").read_text().strip()
-rtc_date_str = (rtc_path / "date").read_text().strip()
+print(f"RTC Time: {pi5.rtc_datetime}")
 
-# Set wake alarm
-wake_time = datetime.datetime.now() + datetime.timedelta(hours=1)
-wake_timestamp = int(wake_time.timestamp())
-(rtc_path / "wakealarm").write_text(str(wake_timestamp))
+# Schedule wake in 1 hour
+pi5.set_startup_datetime(datetime.datetime.now() + datetime.timedelta(hours=1))
+
+# Schedule shutdown in 30 minutes
+pi5.set_shutdown_datetime(datetime.datetime.now() + datetime.timedelta(minutes=30))
 ```
+
+### Using Hardware Detection
+
+For code that works with both WittyPi 4 and Raspberry Pi 5:
+
+```python
+from tsschedule import detect_hardware
+from tsschedule.backends.raspberrypi5 import RaspberryPi5
+from tsschedule.backends.wittypi4 import WittyPi4
+import smbus2
+
+# Automatically detect hardware
+hardware_type = detect_hardware()
+if hardware_type == "wittypi4":
+    bus = smbus2.SMBus(1, force=True)
+    device = WittyPi4(bus)
+elif hardware_type == "raspberrypi5":
+    device = RaspberryPi5()
+else:
+    raise RuntimeError("No supported hardware detected")
+
+# Common interface works for both
+device.set_startup_datetime(...)
+device.set_shutdown_datetime(...)
+```
+
+For complete API reference, see the [Python API Documentation](API.md).
 
 ## Hardware Specifications
 

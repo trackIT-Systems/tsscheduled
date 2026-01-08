@@ -24,9 +24,11 @@ pdm install
 
 # Python API
 
-This repository includes a Python library for programmatic control of schedule-based power management with support for multiple hardware backends.
+This repository includes a Python library for programmatic control of schedule-based power management with support for multiple hardware backends. The library **automatically detects** available hardware (WittyPi 4 or Raspberry Pi 5).
 
 ## Quick Example
+
+### Schedule Configuration
 
 ```python
 from tsschedule import ScheduleConfiguration
@@ -49,13 +51,36 @@ print(f"Next shutdown: {sc.next_shutdown()}")
 print(f"Currently active: {sc.active()}")
 ```
 
-For hardware-specific backend usage, see the backend documentation:
+### Hardware Backend Usage with Auto-Detection
+
+```python
+from tsschedule import detect_hardware
+from tsschedule.backends.raspberrypi5 import RaspberryPi5
+from tsschedule.backends.wittypi4 import WittyPi4
+import smbus2
+import datetime
+
+# Automatically detect hardware
+hardware_type = detect_hardware()
+if hardware_type == "wittypi4":
+    bus = smbus2.SMBus(1, force=True)
+    device = WittyPi4(bus)
+elif hardware_type == "raspberrypi5":
+    device = RaspberryPi5()
+else:
+    raise RuntimeError("No supported hardware detected")
+
+# Use common interface
+device.set_startup_datetime(datetime.datetime.now() + datetime.timedelta(hours=1))
+```
+
+For hardware-specific backend usage and setup instructions, see the backend documentation:
 - [WittyPi 4 Setup](docs/WittyPi4.md) - Hardware setup for WittyPi 4 power management board
 - [Raspberry Pi 5 Setup](docs/RaspberryPi5.md) - Hardware setup for Raspberry Pi 5 with built-in RTC
 
 ## Running the Daemon
 
-The `tsscheduled` daemon manages schedules automatically:
+The `tsscheduled` daemon manages schedules automatically and **automatically detects** which hardware backend is available (WittyPi 4 or Raspberry Pi 5):
 
 ```bash
 # Run with default schedule.yml
@@ -69,6 +94,7 @@ tsscheduled -vv
 ```
 
 The daemon:
+- **Automatically detects** available hardware (WittyPi 4 or Raspberry Pi 5)
 - Validates RTC time against system clock sources
 - Loads schedule configuration from YAML file
 - Continuously updates startup/shutdown alarms based on schedule

@@ -31,6 +31,7 @@ import datetime
 import enum
 import importlib
 import logging
+import pathlib
 import platform
 import time
 from zoneinfo import ZoneInfo
@@ -38,6 +39,7 @@ from zoneinfo import ZoneInfo
 import astral
 import astral.sun
 import pytimeparse
+import smbus2
 from scheduleparse import ScheduleEntry
 
 __version__ = importlib.metadata.version(__name__)
@@ -450,10 +452,67 @@ class ScheduleConfiguration:
         return self.force_on or any([e.active(now) for e in self.entries])
 
 
+def detect_hardware(manual_override: str | None = None) -> str | None:
+    """Detect which power management hardware is present.
+
+    Checks for WittyPi 4 hardware first, then Raspberry Pi 5. Returns the
+    detected hardware type or None if neither is found.
+
+    Args:
+        manual_override: If provided, return this value without detection.
+                        Valid values: "wittypi4", "raspberrypi5"
+
+    Returns:
+        "wittypi4" if WittyPi hardware detected, "raspberrypi5" if Raspberry Pi 5
+        detected, or None if neither detected.
+    """
+    if manual_override:
+        if manual_override in ("wittypi4", "raspberrypi5"):
+            logger.info("Using manual hardware override: %s", manual_override)
+            return manual_override
+        else:
+            logger.warning("Invalid manual override '%s', detecting hardware", manual_override)
+
+    # Try to detect WittyPi 4 first
+    try:
+        bus = smbus2.SMBus(1, force=True)
+        try:
+            firmware_id = bus.read_byte_data(I2C_MC_ADDRESS, 0)  # I2C_ID = 0
+            if firmware_id == 0x26:
+                logger.info("Detected WittyPi 4 hardware (firmware ID: 0x%02x)", firmware_id)
+                bus.close()
+                return "wittypi4"
+        finally:
+            bus.close()
+    except (OSError, IOError) as e:
+        logger.debug("WittyPi 4 not detected: %s", e)
+
+    # Try to detect Raspberry Pi 5
+    try:
+        # Check device tree model
+        model_path = pathlib.Path("/proc/device-tree/model")
+        if model_path.exists():
+            model_text = model_path.read_text()
+            if "Raspberry Pi 5" in model_text:
+                # Check for RTC wakealarm support
+                wakealarm_path = pathlib.Path("/sys/class/rtc/rtc0/wakealarm")
+                if wakealarm_path.exists():
+                    logger.info("Detected Raspberry Pi 5 with RTC support")
+                    return "raspberrypi5"
+                else:
+                    logger.debug("Raspberry Pi 5 detected but RTC wakealarm not available")
+    except (OSError, IOError) as e:
+        logger.debug("Raspberry Pi 5 detection failed: %s", e)
+
+    logger.warning("No supported power management hardware detected")
+    return None
+
+
 __all__ = [
     "ActionReason",
     "ButtonEntry",
     "ScheduleConfiguration",
+    "detect_hardware",
     "ALARM_RESET",
     "I2C_MC_ADDRESS",
     "HALT_PIN",
